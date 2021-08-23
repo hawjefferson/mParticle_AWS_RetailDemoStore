@@ -1,0 +1,162 @@
+# Docker compose file for local development.
+# Initialize your local environment variables either in your shell
+# or in the ".env" file.
+version: "3.7"
+services:
+  carts:
+    container_name: carts
+    build:
+      context: ./carts
+    networks:
+      - dev-net
+    ports:
+      - "8003:80"
+
+  ddb:
+    image: amazon/dynamodb-local
+    container_name: ddb
+    command: -jar DynamoDBLocal.jar -port 3001
+    networks:
+      - dev-net
+    ports:
+      - 3001:3001
+
+  orders:
+    container_name: orders
+    build:
+      context: ./orders
+    networks:
+      - dev-net
+    ports:
+      - "8004:80"
+
+  products:
+    container_name: products
+    depends_on:
+      - ddb
+    environment:
+      - AWS_REGION
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - DDB_TABLE_PRODUCTS
+      - DDB_TABLE_CATEGORIES
+      - DDB_ENDPOINT_OVERRIDE
+      - IMAGE_ROOT_URL
+      - WEB_ROOT_URL
+    build:
+      context: ./products
+      args:
+        - GOPROXY_OVERRIDE
+    networks:
+      - dev-net
+    ports:
+      - "8001:80"
+
+  recommendations:
+    container_name: recommendations
+    depends_on:
+      - products
+    environment:
+      - AWS_PROFILE
+      - AWS_DEFAULT_REGION
+      - PRODUCT_SERVICE_HOST
+      - PRODUCT_SERVICE_PORT
+    volumes:
+      - ~/.aws/:/root/.aws:ro
+    build:
+      context: ./recommendations
+    networks:
+      - dev-net
+    ports:
+      - "8005:80"
+
+  # OpenSource Elastisearch required for search service
+  elasticsearch:
+    image: opensearchproject/opensearch:1.0.0
+    container_name: elasticsearch
+    environment:
+      - plugins.security.disabled=true
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ${APPDATA}/elasticsearch/data:/tmp/elasticsearch/data
+    networks:
+      - dev-net
+    ports:
+      - 9200:9200
+      - 9300:9300
+
+  search:
+    container_name: search
+    depends_on:
+      - elasticsearch
+    environment:
+      - AWS_PROFILE
+      - ES_SEARCH_DOMAIN_SCHEME
+      - ES_SEARCH_DOMAIN_HOST
+      - ES_SEARCH_DOMAIN_PORT
+    volumes:
+      - ~/.aws/:/root/.aws:ro
+    build:
+      context: ./search
+    networks:
+      - dev-net
+    ports:
+      - "8006:80"
+
+  users:
+    container_name: users
+    environment:
+      - AWS_REGION
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    build:
+      context: ./users
+    networks:
+      - dev-net
+    ports:
+      - "8002:80"
+
+  # This service has it's own .env file at src/web-ui/.env
+  web-ui:
+    container_name: web-ui
+    build:
+      context: ./web-ui
+      target: production-stage
+    networks:
+      - dev-net
+    ports:
+      - "8080:80"
+    volumes:
+      - ../images:/usr/share/nginx/html/images:ro
+
+  videos:
+    container_name: videos
+    build:
+      context: ./videos
+    networks:
+      - dev-net
+    environment:
+      - AWS_PROFILE
+      - AWS_DEFAULT_REGION
+      - RESOURCE_BUCKET
+      - PARAMETER_IVS_VIDEO_CHANNEL_MAP
+      - USE_DEFAULT_IVS_STREAMS
+    volumes:
+      - ~/.aws/:/root/.aws:ro
+    ports:
+      - "8007:80"
+
+networks:
+  dev-net:
+    driver: bridge
